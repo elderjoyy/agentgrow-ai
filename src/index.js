@@ -27,7 +27,7 @@ function getCookie(request, name) {
 }
 function cleanString(v, max = 500) { return String(v ?? "").trim().slice(0, max); }
 function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
-function safeUser(row) { return { id:row.id, name:row.name, email:row.email, role:row.role, plan:row.plan, createdAt:row.created_at }; }
+function safeUser(row) { return { id:row.id, name:row.name, email:row.email, phone:row.phone || "", role:row.role, plan:row.plan, createdAt:row.created_at }; }
 function monthKey() { const d = new Date(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}`; }
 
 async function currentUser(request, env) {
@@ -35,7 +35,7 @@ async function currentUser(request, env) {
   if (!token) return null;
   const tokenHash = await sha256(token);
   const row = await env.DB.prepare(
-    "SELECT u.id,u.name,u.email,u.role,u.plan,u.created_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?"
+    "SELECT u.id,u.name,u.email,u.phone,u.role,u.plan,u.created_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?"
   ).bind(tokenHash, Math.floor(Date.now()/1000)).first();
   return row || null;
 }
@@ -65,21 +65,70 @@ async function handleApi(request, env, ctx) {
   if (method === "POST" && path === "/api/auth/register") {
     const body = await request.json().catch(() => null);
     if (!body) return fail("Invalid request body.");
-    const name = cleanString(body.name,100), email = cleanString(body.email,190).toLowerCase(), password = String(body.password || "");
+    const name = cleanString(body.name,100), email = cleanString(body.email,190).toLowerCase(), password = String(body.password || ""), phone = cleanString(body.phone,20);
     if (name.length < 2) return fail("Please enter your full name.");
     if (!validEmail(email)) return fail("Please enter a valid email address.");
+    if (!/^\\+?[0-9][0-9\\s().-]{7,18}$/.test(phone)) return fail("Please enter a valid contact number with country code if applicable.");
     if (password.length < 10) return fail("Use a password with at least 10 characters.");
+    if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return fail("Email verification is not configured yet. The administrator must add the Resend API key and verified sender address in Cloudflare.",503);
     const exists = await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first();
     if (exists) return fail("An account with this email already exists.",409);
+    const now = Math.floor(Date.now()/1000);
+    const pending = await env.DB.prepare("SELECT last_sent_at FROM pending_registrations WHERE email=?").bind(email).first();
+    if (pending && now - pending.last_sent_at < 60) return fail("A verification code was just sent. Please wait one minute before requesting another.",429);
     const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
     const hash = await derivePassword(password,salt);
-    const id = uid();
-    const role = email === cleanString(env.ADMIN_EMAIL,190).toLowerCase() ? "admin" : "user";
-    await env.DB.prepare("INSERT INTO users(id,name,email,password_hash,password_salt,role,plan) VALUES(?,?,?,?,?,?,?)")
-      .bind(id,name,email,hash,salt,role,"free").run();
-    const token = randomToken(), tokenHash = await sha256(token), expires = Math.floor(Date.now()/1000)+SESSION_SECONDS;
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6,"0");
+    const codeHash = await sha256(email + ":" + code);
+    await env.DB.prepare(`INSERT INTO pending_registrations(email,name,phone,password_hash,password_salt,code_hash,expires_at,attempts,last_sent_at)
+      VALUES(?,?,?,?,?,?,?,0,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,phone=excluded.phone,password_hash=excluded.password_hash,password_salt=excluded.password_salt,code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0,last_sent_at=excluded.last_sent_at`)
+      .bind(email,name,phone,hash,salt,codeHash,now+600,now).run();
+    const mail = await fetch("https://api.resend.com/emails",{method:"POST",headers:{"authorization":`Bearer ${env.RESEND_API_KEY}`,"content-type":"application/json"},body:JSON.stringify({from:env.EMAIL_FROM,to:[email],subject:"Your AgentGrow AI verification code",text:`Your AgentGrow AI verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,html:`<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:28px;color:#18372c"><div style="background:#16865d;color:white;font-size:24px;font-weight:bold;width:48px;height:48px;border-radius:12px;display:grid;place-items:center;text-align:center;line-height:48px">A</div><h2>Verify your email address</h2><p>Use this code to complete your AgentGrow AI registration:</p><p style="font-size:30px;font-weight:bold;letter-spacing:8px;color:#16865d">${code}</p><p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p></div>`})});
+    if (!mail.ok) {
+      const err = await mail.json().catch(()=>({}));
+      return fail(err.message || "We could not send the verification email. Please check the email address or try again later.",502);
+    }
+    return json({ok:true,verificationRequired:true,email});
+  }
+
+  if (method === "POST" && path === "/api/auth/verify-email") {
+    const body = await request.json().catch(()=>null);
+    const email = cleanString(body?.email,190).toLowerCase(), code = cleanString(body?.code,6);
+    if (!validEmail(email) || !/^\\d{6}$/.test(code)) return fail("Enter the six-digit verification code sent to your email.");
+    const pending = await env.DB.prepare("SELECT * FROM pending_registrations WHERE email=?").bind(email).first();
+    if (!pending) return fail("No pending registration was found. Please start registration again.",404);
+    const now = Math.floor(Date.now()/1000);
+    if (pending.expires_at < now) { await env.DB.prepare("DELETE FROM pending_registrations WHERE email=?").bind(email).run(); return fail("This code has expired. Please register again to receive a new code.",410); }
+    if (pending.attempts >= 5) return fail("Too many incorrect attempts. Please register again to receive a new code.",429);
+    if (await sha256(email + ":" + code) !== pending.code_hash) {
+      await env.DB.prepare("UPDATE pending_registrations SET attempts=attempts+1 WHERE email=?").bind(email).run();
+      return fail("That verification code is incorrect. Please check the email and try again.",400);
+    }
+    const exists = await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first();
+    if (exists) { await env.DB.prepare("DELETE FROM pending_registrations WHERE email=?").bind(email).run(); return fail("An account with this email already exists.",409); }
+    const id=uid(), role=email===cleanString(env.ADMIN_EMAIL,190).toLowerCase()?"admin":"user";
+    await env.DB.prepare("INSERT INTO users(id,name,email,phone,email_verified,password_hash,password_salt,role,plan) VALUES(?,?,?,?,1,?,?,?,?)")
+      .bind(id,pending.name,email,pending.phone,pending.password_hash,pending.password_salt,role,"free").run();
+    await env.DB.prepare("DELETE FROM pending_registrations WHERE email=?").bind(email).run();
+    const row=await env.DB.prepare("SELECT id,name,email,phone,role,plan,created_at FROM users WHERE id=?").bind(id).first();
+    const token=randomToken(),tokenHash=await sha256(token),expires=now+SESSION_SECONDS;
     await env.DB.prepare("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)").bind(tokenHash,id,expires).run();
-    return json({ user:{id,name,email,role,plan:"free"}, usage:{used:0,limit:role==="admin"?null:FREE_MONTHLY_LIMIT,month:monthKey()} },201,{ "set-cookie":cookie("bb_session",token,SESSION_SECONDS) });
+    return json({user:safeUser(row),usage:{used:0,limit:role==="admin"?null:FREE_MONTHLY_LIMIT,month:monthKey()}},201,{"set-cookie":cookie("bb_session",token,SESSION_SECONDS)});
+  }
+
+  if (method === "POST" && path === "/api/auth/resend-code") {
+    const body=await request.json().catch(()=>null), email=cleanString(body?.email,190).toLowerCase();
+    if (!validEmail(email)) return fail("Enter a valid email address.");
+    const pending=await env.DB.prepare("SELECT * FROM pending_registrations WHERE email=?").bind(email).first();
+    if (!pending) return fail("No pending registration was found. Please start again.");
+    const now=Math.floor(Date.now()/1000);
+    if (now-pending.last_sent_at<60) return fail("Please wait one minute before requesting another code.",429);
+    const code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,"0");
+    const codeHash=await sha256(email+":"+code);
+    await env.DB.prepare("UPDATE pending_registrations SET code_hash=?,expires_at=?,attempts=0,last_sent_at=? WHERE email=?").bind(codeHash,now+600,now,email).run();
+    const mail=await fetch("https://api.resend.com/emails",{method:"POST",headers:{"authorization":`Bearer ${env.RESEND_API_KEY}`,"content-type":"application/json"},body:JSON.stringify({from:env.EMAIL_FROM,to:[email],subject:"Your AgentGrow AI verification code",text:`Your new AgentGrow AI verification code is ${code}. It expires in 10 minutes.`,html:`<p>Your AgentGrow AI verification code is:</p><p style="font-size:30px;font-weight:bold;letter-spacing:8px">${code}</p><p>This code expires in 10 minutes.</p>`})});
+    if(!mail.ok)return fail("We could not send a new verification email. Please try again later.",502);
+    return json({ok:true});
   }
 
   if (method === "POST" && path === "/api/auth/login") {
