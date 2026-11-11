@@ -1,0 +1,23 @@
+name = "agentgrow-ai"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "agentgrow-db"
+database_id = "fedcb245-886c-4b10-94bb-af6fa002b49e"
+migrations_dir = "migrations"
+
+
+[vars]
+APP_NAME = "AgentGrow AI"
+# Set this to the email address that should receive the first administrator role.
+ADMIN_EMAIL = "admin@example.com"
+# Set APP_ORIGIN to your production origin, e.g. https://agentgrow.example.com
+APP_ORIGIN = "https://YOUR-DOMAIN.example"

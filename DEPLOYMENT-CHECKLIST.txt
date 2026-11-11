@@ -1,0 +1,29 @@
+AGENTGROW AI — CLOUDFLARE DEPLOYMENT CHECKLIST
+
+[ ] Install Node.js LTS
+[ ] Extract this ZIP on your computer
+[ ] Open PowerShell/Terminal in the extracted folder
+[ ] Run: npm install
+[ ] Run: npx wrangler login
+[ ] Run: npx wrangler d1 create agentgrow-db
+[ ] Paste the returned database ID into wrangler.toml
+[ ] Run: npx wrangler d1 execute agentgrow-db --remote --file=migrations/0001_init.sql
+[ ] Run: npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql
+[ ] Change ADMIN_EMAIL in wrangler.toml to your own login email
+[ ] Change APP_ORIGIN to your HTTPS Worker/domain origin
+[ ] Run: npx wrangler secret put OPENAI_API_KEY
+[ ] Run: npx wrangler secret put SESSION_SECRET
+[ ] Run: npx wrangler deploy
+[ ] Open the Worker URL and register using ADMIN_EMAIL
+[ ] Test adding a property and generating a campaign
+
+CURRENCY: The app uses Indian rupees (INR / ₹) only. Property listing prices are entered in Lakhs/Crores; transaction values and commissions are entered as full rupee amounts.
+
+IMPORTANT:
+- Keep API keys private; never paste them into frontend files.
+- Payments are not connected. Pro plan is assigned manually by an admin.
+- This is a deployable first SaaS release; complete the security checklist in README before public paid launch.
+
+DATABASE UPDATE FOR TRANSACTIONS
+Run after the original schema is installed:
+npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql

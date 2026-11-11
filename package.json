@@ -1,0 +1,15 @@
+{
+  "name": "agentgrow-ai-cloudflare",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute agentgrow-db --local --file=migrations/0001_init.sql",
+    "db:remote": "wrangler d1 execute agentgrow-db --remote --file=migrations/0001_init.sql",
+    "db:transactions": "wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
