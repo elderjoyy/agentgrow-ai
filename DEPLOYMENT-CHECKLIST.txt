@@ -9,10 +9,14 @@ AGENTGROW AI — CLOUDFLARE DEPLOYMENT CHECKLIST
 [ ] Paste the returned database ID into wrangler.toml
 [ ] Run: npx wrangler d1 execute agentgrow-db --remote --file=migrations/0001_init.sql
 [ ] Run: npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql
+[ ] Run: npx wrangler d1 execute agentgrow-db --remote --file=migrations/0003_email_verification.sql
 [ ] Change ADMIN_EMAIL in wrangler.toml to your own login email
 [ ] Change APP_ORIGIN to your HTTPS Worker/domain origin
 [ ] Run: npx wrangler secret put OPENAI_API_KEY
 [ ] Run: npx wrangler secret put SESSION_SECRET
+[ ] Create Resend account and verify a sender domain
+[ ] Run: npx wrangler secret put RESEND_API_KEY
+[ ] Run: npx wrangler secret put EMAIL_FROM
 [ ] Run: npx wrangler deploy
 [ ] Open the Worker URL and register using ADMIN_EMAIL
 [ ] Test adding a property and generating a campaign
@@ -24,6 +28,16 @@ IMPORTANT:
 - Payments are not connected. Pro plan is assigned manually by an admin.
 - This is a deployable first SaaS release; complete the security checklist in README before public paid launch.
 
+EMAIL VERIFICATION
+New signups require a contact number and six-digit email code. Configure Resend first:
+- Verify a sending domain at https://resend.com
+- Store RESEND_API_KEY and EMAIL_FROM as Cloudflare Worker secrets
+- Run the 0003 migration once before testing signup
+
 DATABASE UPDATE FOR TRANSACTIONS
 Run after the original schema is installed:
 npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql
+
+DATABASE UPDATE FOR EMAIL VERIFICATION
+Run once on an existing installation:
+npx wrangler d1 execute agentgrow-db --remote --file=migrations/0003_email_verification.sql
