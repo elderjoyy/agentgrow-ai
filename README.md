@@ -4,7 +4,7 @@ A multi-user Indian real-estate marketing workspace built on Cloudflare Workers 
 
 ## Included features
 
-- Email/password registration and login; password hashes use PBKDF2-SHA-256.
+- Email/password login and verified registration; signup collects full name, email and contact number, then requires a six-digit email OTP before creating the account. Password hashes use PBKDF2-SHA-256.
 - Secure, HttpOnly, Secure, SameSite=Lax session cookie.
 - Separate properties, transactions, campaigns and usage records per user.
 - Agent transaction ledger: sale/resale/rental/lease, property type and full address, buyer/seller contacts, deal value, commission rate/earned/received, payment reference/status, transaction status, lead source, co-broker share and notes. **All financial amounts use Indian rupees (INR / ₹); no USD or foreign-exchange conversion is used.**
@@ -22,7 +22,7 @@ A multi-user Indian real-estate marketing workspace built on Cloudflare Workers 
 ## Important limitations in this first production package
 
 1. Payments are **not** integrated. The admin manually assigns Free/Pro plans. Do not advertise paid checkout until a payment provider and webhook flow have been implemented and tested.
-2. Email verification, password reset emails, custom domain setup and automated subscription billing are not included.
+2. Email OTP verification is included for new registrations and requires a Resend account, API key and verified sender domain. Password reset emails and automated subscription billing are not included.
 3. Persistent property-library image uploads are disabled to avoid requiring an R2 subscription. The Creative Studio can still use a photo selected locally in your browser for the current poster.
 4. RERA numbers and property claims are user-entered and are not independently verified. Review generated content before publishing.
 5. The first account whose email exactly matches `ADMIN_EMAIL` becomes an administrator. Configure that value before creating your first account.
@@ -72,7 +72,7 @@ Create the database tables:
 
 ```bash
 npx wrangler d1 execute agentgrow-db --remote --file=migrations/0001_init.sql
-npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql
+npx wrangler d1 execute agentgrow-db --remote --file=migrations/0002_transactions.sql\nnpx wrangler d1 execute agentgrow-db --remote --file=migrations/0003_email_verification.sql
 ```
 
 ## 3. Image storage
@@ -94,10 +94,10 @@ Run these commands, entering the actual values when prompted:
 
 ```bash
 npx wrangler secret put OPENAI_API_KEY
-npx wrangler secret put SESSION_SECRET
+npx wrangler secret put SESSION_SECRET\nnpx wrangler secret put RESEND_API_KEY\nnpx wrangler secret put EMAIL_FROM
 ```
 
-Use your OpenAI API key for the first secret. For `SESSION_SECRET`, use a long, random value (at least 32 characters). The current session implementation stores random opaque session tokens hashed in D1; the secret is retained for future signed-token extensions.
+Use your OpenAI API key for the first secret. For `SESSION_SECRET`, use a long, random value (at least 32 characters). For `RESEND_API_KEY`, use an API key from Resend (https://resend.com). For `EMAIL_FROM`, enter a sender such as `AgentGrow AI <verify@your-verified-domain.in>` after verifying that domain with Resend. Do not use an address on a domain you do not control. The current session implementation stores random opaque session tokens hashed in D1; the secret is retained for future signed-token extensions.
 
 Never put API keys in `public/app.js`, `index.html`, or any other browser file. Do not share the `.dev.vars` file.
 
@@ -153,7 +153,7 @@ In Cloudflare Dashboard:
 - Set a spending limit/usage alert in your OpenAI account.
 - Configure backups/exports for D1 data.
 - Add privacy policy, terms, support contact and data-retention policy.
-- Add email verification and password reset before broad public launch.
+- Test email verification delivery, expiry, resend throttling and incorrect-code limits before inviting customers. Add password reset before broad public launch.
 - Test registration, login, logout, user isolation, generation failures and quota boundaries.
 - Have the deployment and security configuration reviewed before handling paying customers.
 
@@ -168,7 +168,7 @@ npx wrangler deploy
 ## Troubleshooting
 
 **"OpenAI API key is not configured"**  
-Run `npx wrangler secret put OPENAI_API_KEY`, then deploy again.
+Run `npx wrangler secret put OPENAI_API_KEY`, then deploy again.\n\n**Email verification is not configured**\nAdd `RESEND_API_KEY` and `EMAIL_FROM` as Worker secrets, and verify the sender domain in Resend. Registration intentionally remains blocked until these are configured.
 
 **"Please sign in" after refresh**  
 Check that the app is opened over HTTPS and that browser cookies are enabled.
@@ -188,5 +188,5 @@ Check OpenAI API billing, key validity and usage limits. The application does no
 - `public/index.html` — application shell.
 - `public/styles.css` — responsive visual system.
 - `public/app.js` — frontend application.
-- `migrations/0001_init.sql` and `migrations/0002_transactions.sql` — D1 database schema and agent transaction ledger.
+- `migrations/0001_init.sql`, `0002_transactions.sql` and `0003_email_verification.sql` — D1 schema, transaction ledger and email-verified signup.
 - `wrangler.toml` — Cloudflare configuration.
