@@ -68,7 +68,7 @@ async function handleApi(request, env, ctx) {
     const name = cleanString(body.name,100), email = cleanString(body.email,190).toLowerCase(), password = String(body.password || ""), phone = cleanString(body.phone,20);
     if (name.length < 2) return fail("Please enter your full name.");
     if (!validEmail(email)) return fail("Please enter a valid email address.");
-    if (!/^\\+?[0-9][0-9\\s().-]{7,18}$/.test(phone)) return fail("Please enter a valid contact number with country code if applicable.");
+    if (!/^\+?[0-9][0-9\s().-]{7,18}$/.test(phone)) return fail("Please enter a valid contact number. Enter 10 digits, optionally with +country code.");
     if (password.length < 10) return fail("Use a password with at least 10 characters.");
     if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return fail("Email verification is not configured yet. The administrator must add the Resend API key and verified sender address in Cloudflare.",503);
     const exists = await env.DB.prepare("SELECT id FROM users WHERE email=?").bind(email).first();
